@@ -27,6 +27,7 @@ import {
 import { OneCLI } from '@onecli-sh/sdk';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
+import { readEnvFile } from './env.js';
 
 const onecli = new OneCLI({ url: ONECLI_URL });
 
@@ -251,6 +252,15 @@ async function buildContainerArgs(
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
+
+  // Pass Atlas API credentials so the agent can query the platform
+  const atlasEnv = readEnvFile(['ATLAS_API_URL', 'ATLAS_API_TOKEN']);
+  if (atlasEnv.ATLAS_API_URL) {
+    args.push('-e', `ATLAS_API_URL=${atlasEnv.ATLAS_API_URL}`);
+  }
+  if (atlasEnv.ATLAS_API_TOKEN) {
+    args.push('-e', `ATLAS_API_TOKEN=${atlasEnv.ATLAS_API_TOKEN}`);
+  }
 
   // OneCLI gateway handles credential injection — containers never see real secrets.
   // The gateway intercepts HTTPS traffic and injects API keys or OAuth tokens.
