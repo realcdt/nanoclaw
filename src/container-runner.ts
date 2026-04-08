@@ -269,9 +269,7 @@ async function buildContainerArgs(
     'gws',
   );
   if (fs.existsSync(gwsConfigDir)) {
-    args.push(
-      ...readonlyMountArgs(gwsConfigDir, '/home/node/.config/gws'),
-    );
+    args.push(...readonlyMountArgs(gwsConfigDir, '/home/node/.config/gws'));
   }
 
   // OneCLI gateway handles credential injection — containers never see real secrets.
