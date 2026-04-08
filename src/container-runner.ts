@@ -262,6 +262,18 @@ async function buildContainerArgs(
     args.push('-e', `ATLAS_API_TOKEN=${atlasEnv.ATLAS_API_TOKEN}`);
   }
 
+  // Mount Google Workspace CLI credentials (read-only) so gws commands work
+  const gwsConfigDir = path.join(
+    process.env.HOME || '/home/ubuntu',
+    '.config',
+    'gws',
+  );
+  if (fs.existsSync(gwsConfigDir)) {
+    args.push(
+      ...readonlyMountArgs(gwsConfigDir, '/home/node/.config/gws'),
+    );
+  }
+
   // OneCLI gateway handles credential injection — containers never see real secrets.
   // The gateway intercepts HTTPS traffic and injects API keys or OAuth tokens.
   const onecliApplied = await onecli.applyContainerConfig(args, {

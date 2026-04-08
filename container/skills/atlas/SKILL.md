@@ -102,6 +102,88 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 - `agent_id` — filter by assigned agent
 - `overdue_only=true` — only past follow-up date
 
+### Quo Text Messages & Calls
+
+Browse SMS/text conversations and phone calls from Quo (formerly OpenPhone). The default Quo phone number is **+19143713355**.
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | /admin/quo-sync/phone-numbers | Admin | List all Quo phone numbers (returns phoneNumberId needed for other calls) |
+| GET | /admin/quo-sync/contacts | Admin | All Quo contacts with phone lookup map |
+| GET | /admin/quo-sync/phone-numbers/{phoneNumberId}/conversations | Admin | List conversations for a phone number |
+| GET | /admin/quo-sync/phone-numbers/{phoneNumberId}/messages | Admin | List messages for a conversation |
+| GET | /admin/quo-sync/phone-numbers/{phoneNumberId}/calls | Admin | List calls for a phone number |
+| GET | /admin/quo-sync/calls/{call_id} | Admin | Call details with recording, transcript, and summary |
+| POST | /quo/send | Admin | Send an SMS message |
+
+**Conversations parameters:**
+- `max_results` (1-100, default 50)
+- `page_token` — for pagination
+- `exclude_inactive` — remove inactive conversations
+
+**Messages parameters:**
+- `participant` — **required**, the external party's phone number (E.164, e.g. `+15551234567`)
+- `days_back` (1-365, default 30)
+- `max_results` (1-100, default 50)
+- `page_token` — for pagination
+
+**Calls parameters:**
+- `participant` — optional, filter to calls with a specific phone number
+- `days_back` (1-365, default 30)
+- `max_results` (1-100, default 50)
+- `page_token` — for pagination
+
+**Send message body (POST /quo/send):**
+```json
+{"to": "+15551234567", "body": "Message text (1-1600 chars)"}
+```
+
+**Contacts response** includes a `phoneLookup` map for resolving names:
+```json
+{
+  "contacts": [...],
+  "phoneLookup": {
+    "+15551234567": {
+      "contactId": "CT...",
+      "firstName": "Jake",
+      "lastName": "Dunsmore",
+      "company": "Acme Inc",
+      "displayName": "Jake Dunsmore",
+      "externalId": "hubspot-id-if-linked",
+      "source": "hubspot"
+    }
+  }
+}
+```
+
+#### How to look up texts by contact name
+
+1. **Get the phone number ID** for our default line (+19143713355):
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" "$ATLAS_API_URL/admin/quo-sync/phone-numbers" \
+  | node -e "process.stdin.on('data',d=>{const pns=JSON.parse(d).phoneNumbers;pns.forEach(p=>console.log(p.id,p.formattedNumber))})"
+```
+
+2. **Fetch contacts and find the person by name** (case-insensitive partial match):
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" "$ATLAS_API_URL/admin/quo-sync/contacts" \
+  | node -e "
+    process.stdin.on('data',d=>{
+      const {phoneLookup}=JSON.parse(d);
+      const name='jake dunsmore';
+      for(const [phone,c] of Object.entries(phoneLookup)){
+        if(c.displayName && c.displayName.toLowerCase().includes(name.toLowerCase()))
+          console.log(phone, c.displayName);
+      }
+    })"
+```
+
+3. **Get recent messages** with that participant:
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$ATLAS_API_URL/admin/quo-sync/phone-numbers/PN_ID_HERE/messages?participant=+15551234567&days_back=30"
+```
+
 ## Common Query Patterns
 
 ### "How many active exclusive listings do we have?"
@@ -133,6 +215,28 @@ curl -s -H "Authorization: Bearer $TOKEN" "$ATLAS_API_URL/users" | node -e "
 ### "Show inquiry pipeline for a listing"
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" "$ATLAS_API_URL/listing-inquiries/pipeline/{listing_id}"
+```
+
+### "What's the latest text from Jake Dunsmore?"
+```bash
+# Step 1: Get phone number ID (cache this — it rarely changes)
+PHONE_NUMBER_ID=$(curl -s -H "Authorization: Bearer $TOKEN" "$ATLAS_API_URL/admin/quo-sync/phone-numbers" \
+  | node -e "process.stdin.on('data',d=>{const pn=JSON.parse(d).phoneNumbers.find(p=>p.formattedNumber&&p.formattedNumber.includes('9143713355'));if(pn)process.stdout.write(pn.id)})")
+
+# Step 2: Find Jake's phone number from contacts
+JAKE_PHONE=$(curl -s -H "Authorization: Bearer $TOKEN" "$ATLAS_API_URL/admin/quo-sync/contacts" \
+  | node -e "process.stdin.on('data',d=>{const{phoneLookup}=JSON.parse(d);for(const[ph,c]of Object.entries(phoneLookup)){if(c.displayName&&c.displayName.toLowerCase().includes('jake dunsmore')){process.stdout.write(ph);break}}})")
+
+# Step 3: Get recent messages
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$ATLAS_API_URL/admin/quo-sync/phone-numbers/$PHONE_NUMBER_ID/messages?participant=$JAKE_PHONE&days_back=7&max_results=10"
+```
+
+### "Send a text to Jake Dunsmore"
+```bash
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  "$ATLAS_API_URL/quo/send" \
+  -d '{"to": "+15551234567", "body": "Hey Jake, just following up..."}'
 ```
 
 ## Tips
