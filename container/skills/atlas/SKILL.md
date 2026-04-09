@@ -239,6 +239,222 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/
   -d '{"to": "+15551234567", "body": "Hey Jake, just following up..."}'
 ```
 
+### Process Inquiry (Email, SMS, Call)
+
+Use these endpoints to analyze an email, text message, or phone call and extract structured inquiry data (contact info, listing match, HubSpot match, suggested stage). The analysis is powered by Claude on the backend. After reviewing the results, save the inquiry using the corresponding create endpoint.
+
+#### Process Endpoints
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | /email-browser/emails/{email_id}/process-inquiry | Admin | Analyze an imported email as a potential listing inquiry |
+| POST | /quo/messages/process-inquiry | Admin | Analyze an SMS/text message as a potential listing inquiry |
+| POST | /quo/calls/process-inquiry | Admin | Analyze a phone call transcript as a potential listing inquiry |
+
+**Email process-inquiry body:**
+```json
+{
+  "exclusive_listing_id": "optional — pre-selected listing hint"
+}
+```
+The `email_id` in the URL must reference an existing document in `email_messages` (imported via `run_email_import.py`).
+
+**SMS process-inquiry body:**
+```json
+{
+  "text": "The SMS message content",
+  "from_number": "+15551234567",
+  "to_numbers": ["+19143713355"],
+  "timestamp": "2026-04-09T14:30:00Z",
+  "quo_message_id": "optional — Quo message ID",
+  "exclusive_listing_id": "optional — pre-selected listing hint",
+  "contact_name": "optional — pre-resolved from Quo contacts",
+  "hubspot_contact_id": "optional — pre-resolved HubSpot ID",
+  "conversation_messages": [
+    {"direction": "incoming", "from_number": "+15551234567", "text": "...", "timestamp": "..."},
+    {"direction": "outgoing", "from_number": "+19143713355", "text": "...", "timestamp": "..."}
+  ]
+}
+```
+Required fields: `text`, `from_number`, `to_numbers`. The rest are optional but improve analysis quality. Pass `conversation_messages` to give the AI full thread context.
+
+**Call process-inquiry body:**
+```json
+{
+  "call_id": "quo-call-id",
+  "participant_phone": "+15551234567",
+  "exclusive_listing_id": "optional — pre-selected listing hint"
+}
+```
+Required fields: `call_id`, `participant_phone`. The backend fetches the transcript from Quo automatically.
+
+#### Analysis Response (all three endpoints return this)
+
+```json
+{
+  "contact_name": "John Doe",
+  "contact_email": "john@example.com",
+  "contact_phone": "+15550123",
+  "contact_company": "XYZ Realty",
+  "is_buyer_agent": true,
+  "buyer_name": "Jane Doe",
+  "hubspot_contact_id": "12345",
+  "hubspot_contact_name": "John Doe",
+  "hubspot_match_confidence": "high",
+  "exclusive_listing_id": "507f1f77bcf86cd799439011",
+  "listing_address": "123 Main St, New York, NY 10001",
+  "listing_match_confidence": "high",
+  "listing_match_reasoning": "Email explicitly mentions address",
+  "existing_inquiry_id": null,
+  "existing_inquiry_stage": null,
+  "existing_inquiry_contact": null,
+  "source": "email",
+  "source_detail": "Initial inquiry from buyer's agent",
+  "notes": "Agent inquired about property on behalf of client...",
+  "suggested_stage": "new_inquiry"
+}
+```
+
+Key fields to check:
+- `existing_inquiry_id` — if not null, an inquiry already exists for this contact/listing. Use the update endpoint instead of creating a new one.
+- `listing_match_confidence` / `hubspot_match_confidence` — "high", "medium", or "low". Review carefully if not "high".
+- `suggested_stage` — one of: new_inquiry, contacted, engaged, showing_scheduled, showing_completed, feedback_received, offer_pending, passed, nurture, lost
+
+#### Save/Create Inquiry Endpoints
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | /listing-inquiries/from-email | Admin | Create inquiry from email analysis |
+| POST | /listing-inquiries/from-sms | Admin | Create inquiry from SMS analysis |
+| POST | /listing-inquiries/{inquiry_id}/update-from-message | Admin | Update existing inquiry with new message |
+
+**Create from email body:**
+```json
+{
+  "email_id": "the-email-id",
+  "exclusive_listing_id": "listing-id-from-analysis",
+  "contact_name": "John Doe",
+  "contact_email": "john@example.com",
+  "contact_phone": "+15550123",
+  "contact_company": "XYZ Realty",
+  "is_buyer_agent": true,
+  "buyer_name": "Jane Doe",
+  "hubspot_contact_id": "12345",
+  "create_hubspot_contact": false,
+  "source_detail": "Initial inquiry from buyer's agent",
+  "notes": "Agent inquired about property...",
+  "assigned_agent_id": "optional — agent user ID",
+  "next_follow_up_date": "optional — ISO datetime"
+}
+```
+Required: `email_id`, `exclusive_listing_id`, `contact_name`, `is_buyer_agent`, `create_hubspot_contact`.
+
+**Create from SMS body:**
+```json
+{
+  "quo_message_id": "quo-msg-id",
+  "from_number": "+15551234567",
+  "exclusive_listing_id": "listing-id-from-analysis",
+  "contact_name": "John Doe",
+  "contact_email": "john@example.com",
+  "contact_phone": "+15551234567",
+  "contact_company": "XYZ Realty",
+  "is_buyer_agent": false,
+  "buyer_name": null,
+  "hubspot_contact_id": "12345",
+  "create_hubspot_contact": false,
+  "source_detail": "SMS inquiry about listing",
+  "notes": "Prospect texted about...",
+  "assigned_agent_id": "optional",
+  "next_follow_up_date": "optional"
+}
+```
+Required: `quo_message_id`, `from_number`, `exclusive_listing_id`, `contact_name`, `is_buyer_agent`, `create_hubspot_contact`.
+
+**Save response:**
+```json
+{
+  "inquiry": { "...full ListingInquiry object..." },
+  "hubspot_contact_id": "12345 or null"
+}
+```
+
+#### Workflow: Processing an Inquiry
+
+**For an email:**
+1. Get the email ID (user provides it, or browse emails via email-browser endpoints if available)
+2. Call `POST /email-browser/emails/{email_id}/process-inquiry` with optional listing hint
+3. Review the analysis response with the user — confirm contact info, listing match, and stage
+4. If `existing_inquiry_id` is set, use `POST /listing-inquiries/{inquiry_id}/update-from-message` instead
+5. Otherwise, call `POST /listing-inquiries/from-email` with the confirmed/edited fields
+6. Report the created inquiry back to the user
+
+**For a text message:**
+1. Gather the SMS details (text content, from_number, to_numbers). Optionally look up the contact name via `/admin/quo-sync/contacts` and include conversation context.
+2. Call `POST /quo/messages/process-inquiry` with the message data
+3. Review the analysis response with the user — confirm contact info, listing match, and stage
+4. If `existing_inquiry_id` is set, use update endpoint instead
+5. Otherwise, call `POST /listing-inquiries/from-sms` with the confirmed/edited fields
+6. Report the created inquiry back to the user
+
+**For a phone call:**
+1. Get the call ID and participant phone number
+2. Call `POST /quo/calls/process-inquiry`
+3. Review and save as above
+
+#### Example: Process an email inquiry
+
+```bash
+# Step 1: Process the email
+curl -s -X POST -H "Authorization: Bearer $ATLAS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ATLAS_API_URL/email-browser/emails/EMAIL_ID_HERE/process-inquiry" \
+  -d '{"exclusive_listing_id": null}'
+
+# Step 2: After reviewing analysis, save the inquiry
+curl -s -X POST -H "Authorization: Bearer $ATLAS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ATLAS_API_URL/listing-inquiries/from-email" \
+  -d '{
+    "email_id": "EMAIL_ID_HERE",
+    "exclusive_listing_id": "LISTING_ID_FROM_ANALYSIS",
+    "contact_name": "John Doe",
+    "contact_email": "john@example.com",
+    "is_buyer_agent": false,
+    "create_hubspot_contact": true,
+    "notes": "Inquiry about 123 Main St"
+  }'
+```
+
+#### Example: Process an SMS inquiry
+
+```bash
+# Step 1: Process the text message
+curl -s -X POST -H "Authorization: Bearer $ATLAS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ATLAS_API_URL/quo/messages/process-inquiry" \
+  -d '{
+    "text": "Hi, I saw your listing on 5th Ave. Is it still available?",
+    "from_number": "+15551234567",
+    "to_numbers": ["+19143713355"]
+  }'
+
+# Step 2: After reviewing analysis, save the inquiry
+curl -s -X POST -H "Authorization: Bearer $ATLAS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ATLAS_API_URL/listing-inquiries/from-sms" \
+  -d '{
+    "quo_message_id": "QUO_MSG_ID",
+    "from_number": "+15551234567",
+    "exclusive_listing_id": "LISTING_ID_FROM_ANALYSIS",
+    "contact_name": "Jane Smith",
+    "contact_phone": "+15551234567",
+    "is_buyer_agent": false,
+    "create_hubspot_contact": true,
+    "notes": "Asked about 5th Ave listing availability"
+  }'
+```
+
 ## Tips
 
 - Always use `paging=true` when searching listings to get total counts
