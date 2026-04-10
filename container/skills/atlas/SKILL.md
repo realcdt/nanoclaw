@@ -97,10 +97,50 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | GET | /listing-inquiries/pipeline/{listing_id} | Admin | Stage counts summary |
 | GET | /listing-inquiries/follow-up-queue | Admin | Inquiries needing follow-up |
 | GET | /listing-inquiries/{inquiry_id} | Admin | Get specific inquiry |
+| PATCH | /listing-inquiries/{inquiry_id}/stage | Admin | Update inquiry stage |
+| POST | /listing-inquiries/{inquiry_id}/communications | Admin | Add communication reference |
 
 **Follow-up queue parameters:**
 - `agent_id` — filter by assigned agent
 - `overdue_only=true` — only past follow-up date
+
+**Update stage (PATCH /listing-inquiries/{inquiry_id}/stage):**
+```json
+{
+  "stage": "showing_scheduled",
+  "note": "optional — why the stage is being changed"
+}
+```
+Valid stages: new_inquiry, contacted, engaged, showing_scheduled, showing_completed, feedback_received, offer_pending, passed, nurture, lost
+
+```bash
+curl -s -X PATCH -H "Authorization: Bearer $ATLAS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ATLAS_API_URL/listing-inquiries/INQUIRY_ID/stage" \
+  -d '{"stage": "showing_scheduled", "note": "Showing confirmed for Friday"}'
+```
+
+**Add communication reference (POST /listing-inquiries/{inquiry_id}/communications):**
+```json
+{
+  "collection": "email_messages|quo_messages|quo_calls",
+  "document_id": "the document ID in the source collection",
+  "channel": "email|sms|call",
+  "direction": "inbound|outbound",
+  "timestamp": "ISO datetime",
+  "summary": "optional — brief description of the communication"
+}
+```
+Required: `collection`, `document_id`, `channel`, `direction`, `timestamp`.
+
+Links an existing email, SMS, or call record to the inquiry without re-running the full process-inquiry analysis flow. Use this when the communication has already been processed or when you just need to attach a reference.
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $ATLAS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ATLAS_API_URL/listing-inquiries/INQUIRY_ID/communications" \
+  -d '{"collection": "email_messages", "document_id": "EMAIL_DOC_ID", "channel": "email", "direction": "inbound", "timestamp": "2026-04-09T14:30:00Z", "summary": "Follow-up from buyer agent"}'
+```
 
 ### Quo Text Messages & Calls
 
@@ -327,6 +367,8 @@ Key fields to check:
 | POST | /listing-inquiries/from-email | Admin | Create inquiry from email analysis |
 | POST | /listing-inquiries/from-sms | Admin | Create inquiry from SMS analysis |
 | POST | /listing-inquiries/{inquiry_id}/update-from-message | Admin | Update existing inquiry with new message |
+| PATCH | /listing-inquiries/{inquiry_id}/stage | Admin | Update inquiry stage |
+| POST | /listing-inquiries/{inquiry_id}/communications | Admin | Add communication reference |
 
 **Create from email body:**
 ```json
