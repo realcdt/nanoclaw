@@ -68,6 +68,59 @@ server.tool(
 );
 
 server.tool(
+  'send_image',
+  'Send an image to the user or group. Use after generating an image with gemini-image or any other tool. The image file must exist at the given path.',
+  {
+    image_path: z
+      .string()
+      .describe(
+        'Absolute or relative path to the image file (PNG, JPG, etc.)',
+      ),
+    caption: z
+      .string()
+      .optional()
+      .describe('Optional caption to send with the image'),
+  },
+  async (args) => {
+    const imagePath = args.image_path;
+
+    // Verify the file exists
+    if (!fs.existsSync(imagePath)) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Image file not found: ${imagePath}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    // Copy image to IPC images directory for host to read
+    const ipcImagesDir = path.join(IPC_DIR, 'images');
+    fs.mkdirSync(ipcImagesDir, { recursive: true });
+    const ipcImageName = `img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`;
+    fs.copyFileSync(imagePath, path.join(ipcImagesDir, ipcImageName));
+
+    const data = {
+      type: 'image',
+      chatJid,
+      groupFolder,
+      imagePath: `images/${ipcImageName}`,
+      caption: args.caption || '',
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(MESSAGES_DIR, data);
+
+    return {
+      content: [{ type: 'text' as const, text: 'Image sent to chat.' }],
+    };
+  },
+);
+
+server.tool(
   'schedule_task',
   `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools. Returns the task ID for future reference. To modify an existing task, use update_task instead.
 

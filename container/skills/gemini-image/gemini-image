@@ -1,0 +1,218 @@
+#!/bin/bash
+set -euo pipefail
+
+# gemini-image — Generate images using Google Gemini API
+# Requires GEMINI_API_KEY environment variable
+
+VERSION="1.0.0"
+MODEL="gemini-3.1-flash-image-preview"
+API_BASE="https://generativelanguage.googleapis.com/v1beta/models"
+
+IPC_DIR="/workspace/ipc"
+MESSAGES_DIR="${IPC_DIR}/messages"
+DEFAULT_OUTPUT_DIR="generated-images"
+
+usage() {
+  cat <<'USAGE'
+gemini-image — Generate images using Google Gemini
+
+Usage:
+  gemini-image generate "<prompt>" [--send] [--output <path>]
+  gemini-image help
+
+Commands:
+  generate   Generate an image from a text prompt
+  help       Show this help message
+
+Generate options:
+  --send     Send the generated image to chat via IPC
+  --output   Save to a specific file path (default: generated-images/img-<timestamp>.png)
+USAGE
+}
+
+cmd_generate() {
+  local prompt=""
+  local send=false
+  local output=""
+
+  # Parse arguments
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --send)
+        send=true
+        shift
+        ;;
+      --output)
+        if [[ -z "${2:-}" ]]; then
+          echo "Error: --output requires a path argument" >&2
+          exit 1
+        fi
+        output="$2"
+        shift 2
+        ;;
+      -*)
+        echo "Error: Unknown option: $1" >&2
+        exit 1
+        ;;
+      *)
+        if [[ -z "$prompt" ]]; then
+          prompt="$1"
+        else
+          echo "Error: Unexpected argument: $1" >&2
+          exit 1
+        fi
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "$prompt" ]]; then
+    echo "Error: No prompt specified" >&2
+    echo "Usage: gemini-image generate \"<prompt>\" [--send] [--output <path>]" >&2
+    exit 1
+  fi
+
+  if [[ -z "${GEMINI_API_KEY:-}" ]]; then
+    echo "Error: GEMINI_API_KEY environment variable is not set" >&2
+    exit 1
+  fi
+
+  # Build output path
+  if [[ -z "$output" ]]; then
+    mkdir -p "$DEFAULT_OUTPUT_DIR"
+    local timestamp
+    timestamp="$(date +%Y%m%d-%H%M%S)"
+    output="${DEFAULT_OUTPUT_DIR}/img-${timestamp}.png"
+  else
+    # Ensure parent directory exists
+    mkdir -p "$(dirname "$output")"
+  fi
+
+  echo "Generating image: ${prompt:0:80}..." >&2
+
+  # Build the request JSON — ask Gemini to generate an image
+  local request_json
+  request_json=$(cat <<JSONEOF
+{
+  "contents": [
+    {
+      "parts": [
+        {"text": "Generate an image: ${prompt//\"/\\\"}"}
+      ]
+    }
+  ],
+  "generationConfig": {
+    "responseModalities": ["TEXT", "IMAGE"]
+  }
+}
+JSONEOF
+)
+
+  # Call Gemini API
+  local response
+  response=$(curl -s -w "\n%{http_code}" \
+    -X POST \
+    -H "Content-Type: application/json" \
+    "${API_BASE}/${MODEL}:generateContent?key=${GEMINI_API_KEY}" \
+    -d "$request_json")
+
+  # Extract HTTP status code (last line)
+  local http_code
+  http_code=$(echo "$response" | tail -n1)
+  local body
+  body=$(echo "$response" | sed '$d')
+
+  if [[ "$http_code" != "200" ]]; then
+    echo "Error: Gemini API returned HTTP ${http_code}" >&2
+    # Try to extract error message
+    local error_msg
+    error_msg=$(echo "$body" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error',{}).get('message','Unknown error'))" 2>/dev/null || echo "Unknown error")
+    echo "Details: ${error_msg}" >&2
+    exit 1
+  fi
+
+  # Extract base64 image data from response using python3 (more reliable than jq for large base64)
+  local image_data
+  image_data=$(echo "$body" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for candidate in data.get('candidates', []):
+    for part in candidate.get('content', {}).get('parts', []):
+        if 'inlineData' in part:
+            print(part['inlineData']['data'])
+            sys.exit(0)
+print('', file=sys.stderr)
+sys.exit(1)
+" 2>/dev/null)
+
+  if [[ -z "$image_data" ]]; then
+    echo "Error: No image data in Gemini response" >&2
+    # Show text response if any
+    echo "$body" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for candidate in data.get('candidates', []):
+    for part in candidate.get('content', {}).get('parts', []):
+        if 'text' in part:
+            print('Model response: ' + part['text'], file=sys.stderr)
+" 2>/dev/null || true
+    exit 1
+  fi
+
+  # Decode and save the image
+  echo "$image_data" | base64 -d > "$output"
+  local size_kb
+  size_kb=$(du -k "$output" | cut -f1)
+  echo "Image saved: ${output} (${size_kb}KB)" >&2
+
+  # Send via IPC if requested
+  if [[ "$send" == true ]]; then
+    if [[ ! -d "$MESSAGES_DIR" ]]; then
+      echo "Warning: IPC messages directory not found, skipping send" >&2
+    else
+      local ipc_filename="${MESSAGES_DIR}/$(date +%s%N)-img.json"
+      local chat_jid="${NANOCLAW_CHAT_JID:-}"
+      local group_folder="${NANOCLAW_GROUP_FOLDER:-}"
+
+      if [[ -z "$chat_jid" ]]; then
+        echo "Warning: NANOCLAW_CHAT_JID not set, cannot send to chat" >&2
+      else
+        # Copy image to IPC images directory for host to read
+        local ipc_images_dir="${IPC_DIR}/images"
+        mkdir -p "$ipc_images_dir"
+        local ipc_image_name="img-$(date +%s%N).png"
+        cp "$output" "${ipc_images_dir}/${ipc_image_name}"
+
+        cat > "$ipc_filename" <<IPCEOF
+{
+  "type": "image",
+  "chatJid": "${chat_jid}",
+  "groupFolder": "${group_folder}",
+  "imagePath": "images/${ipc_image_name}",
+  "caption": "",
+  "timestamp": "$(date -Iseconds)"
+}
+IPCEOF
+        echo "Image queued for delivery to chat" >&2
+      fi
+    fi
+  fi
+
+  # Output the path to stdout for the agent to reference
+  echo "$output"
+}
+
+# Main dispatch
+command="${1:-help}"
+shift || true
+
+case "$command" in
+  generate) cmd_generate "$@" ;;
+  help|--help|-h) usage ;;
+  version|--version|-v) echo "gemini-image $VERSION" ;;
+  *)
+    echo "Error: Unknown command: $command" >&2
+    echo "Run 'gemini-image help' for usage." >&2
+    exit 1
+    ;;
+esac

@@ -203,6 +203,32 @@ export class SlackChannel implements Channel {
     await this.app.stop();
   }
 
+  async sendImage(
+    jid: string,
+    image: Buffer,
+    caption?: string,
+  ): Promise<void> {
+    const channelId = jid.replace(/^slack:/, '');
+    if (!this.connected) {
+      logger.warn({ jid }, 'Slack disconnected, cannot send image');
+      return;
+    }
+    try {
+      await this.app.client.files.uploadV2({
+        channel_id: channelId,
+        file: image,
+        filename: `image-${Date.now()}.png`,
+        initial_comment: caption || undefined,
+      });
+      logger.info(
+        { jid, sizeKB: Math.round(image.length / 1024) },
+        'Slack image sent',
+      );
+    } catch (err) {
+      logger.warn({ jid, err }, 'Failed to send Slack image');
+    }
+  }
+
   // Slack does not expose a typing indicator API for bots.
   // This no-op satisfies the Channel interface so the orchestrator
   // doesn't need channel-specific branching.

@@ -254,12 +254,19 @@ async function buildContainerArgs(
   args.push('-e', `TZ=${TIMEZONE}`);
 
   // Pass Atlas API credentials so the agent can query the platform
-  const atlasEnv = readEnvFile(['ATLAS_API_URL', 'ATLAS_API_TOKEN']);
+  const atlasEnv = readEnvFile([
+    'ATLAS_API_URL',
+    'ATLAS_API_TOKEN',
+    'GEMINI_API_KEY',
+  ]);
   if (atlasEnv.ATLAS_API_URL) {
     args.push('-e', `ATLAS_API_URL=${atlasEnv.ATLAS_API_URL}`);
   }
   if (atlasEnv.ATLAS_API_TOKEN) {
     args.push('-e', `ATLAS_API_TOKEN=${atlasEnv.ATLAS_API_TOKEN}`);
+  }
+  if (atlasEnv.GEMINI_API_KEY) {
+    args.push('-e', `GEMINI_API_KEY=${atlasEnv.GEMINI_API_KEY}`);
   }
 
   // Mount Google Workspace CLI credentials (read-only) so gws commands work
