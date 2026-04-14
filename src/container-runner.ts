@@ -279,6 +279,20 @@ async function buildContainerArgs(
     args.push(...readonlyMountArgs(gwsConfigDir, '/home/node/.config/gws'));
   }
 
+  // Mount Google Workspace CLI credentials file and set env var so gws picks it up
+  const gwsCredsFile = path.join(
+    process.env.HOME || '/home/ubuntu',
+    'credentials.json',
+  );
+  const gwsCredsContainerPath = '/home/node/credentials.json';
+  if (fs.existsSync(gwsCredsFile)) {
+    args.push(...readonlyMountArgs(gwsCredsFile, gwsCredsContainerPath));
+    args.push(
+      '-e',
+      `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=${gwsCredsContainerPath}`,
+    );
+  }
+
   // OneCLI gateway handles credential injection — containers never see real secrets.
   // The gateway intercepts HTTPS traffic and injects API keys or OAuth tokens.
   const onecliApplied = await onecli.applyContainerConfig(args, {
