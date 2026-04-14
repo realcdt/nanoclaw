@@ -320,11 +320,7 @@ export class WhatsAppChannel implements Channel {
     this.sock?.end(undefined);
   }
 
-  async sendImage(
-    jid: string,
-    image: Buffer,
-    caption?: string,
-  ): Promise<void> {
+  async sendImage(jid: string, image: Buffer, caption?: string): Promise<void> {
     if (!this.connected) {
       logger.warn({ jid }, 'WA disconnected, cannot send image');
       return;

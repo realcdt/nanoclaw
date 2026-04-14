@@ -203,11 +203,7 @@ export class SlackChannel implements Channel {
     await this.app.stop();
   }
 
-  async sendImage(
-    jid: string,
-    image: Buffer,
-    caption?: string,
-  ): Promise<void> {
+  async sendImage(jid: string, image: Buffer, caption?: string): Promise<void> {
     const channelId = jid.replace(/^slack:/, '');
     if (!this.connected) {
       logger.warn({ jid }, 'Slack disconnected, cannot send image');
