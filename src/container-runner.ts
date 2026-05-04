@@ -5,6 +5,7 @@
  */
 import { ChildProcess, execSync, spawn } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import { OneCLI } from '@onecli-sh/sdk';
@@ -318,6 +319,18 @@ function buildMounts(
   const skillsSrc = path.join(projectRoot, 'container', 'skills');
   if (fs.existsSync(skillsSrc)) {
     mounts.push({ hostPath: skillsSrc, containerPath: '/app/skills', readonly: true });
+  }
+
+  // Google Workspace CLI credentials (read-only — gws decrypts in memory).
+  // Conditional: only mounted if the host has run `gws auth login`. See
+  // qwibitai/nanoclaw#1122 for the design rationale.
+  const gwsConfigDir = path.join(os.homedir(), '.config', 'gws');
+  if (fs.existsSync(gwsConfigDir)) {
+    mounts.push({
+      hostPath: gwsConfigDir,
+      containerPath: '/home/node/.config/gws',
+      readonly: true,
+    });
   }
 
   // Additional mounts from container config

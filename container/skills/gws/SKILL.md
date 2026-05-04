@@ -1,6 +1,8 @@
 # Google Workspace CLI (gws)
 
-Read email, create calendar events, manage Drive files, and more via the `gws` command-line tool. Authenticated credentials are pre-mounted — no setup needed.
+Read email, create calendar events, manage Drive files, and more via the `gws` command-line tool. Credentials are mounted read-only at `/home/node/.config/gws/` from the host's authenticated session. The CLI returns structured JSON, not human-readable text — chain it with `jq` for filtering.
+
+Use `gws schema <service>.<resource>.<method>` to discover any API method's parameters before calling it.
 
 ## Quick Reference
 
