@@ -28,8 +28,7 @@ registerChannelAdapter('slack', {
     // surfaces. Slack auto-clears that status only when a message is posted
     // to the same thread; since our reply lands at top level, the in-thread
     // status would otherwise stick.
-    const isChannelLike = (channel: string | undefined): boolean =>
-      !!channel && !channel.startsWith('D');
+    const isChannelLike = (channel: string | undefined): boolean => !!channel && !channel.startsWith('D');
 
     const origPostMessage = slackAdapter.postMessage.bind(slackAdapter);
     slackAdapter.postMessage = async (threadId, message) => {
